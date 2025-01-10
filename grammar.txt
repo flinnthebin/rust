@@ -1,0 +1,20 @@
+# Key
+* - 0 or more
++ - 1 or more
+
+
+
+
+
+comp: mapping for_if_clause+
+
+mapping: expression // exp(x * 2)
+
+for_if_clause:
+  'for' pattern 'in' expression ('if' expression)* // for x in xs if x > 0
+
+pattern: name(, name)*
+
+
+
+
