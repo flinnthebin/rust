@@ -1,0 +1,2 @@
+# rust
+proc macro practice
