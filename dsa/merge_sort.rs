@@ -12,9 +12,9 @@ fn merge_sort(arr: &[i32]) -> Vec<i32> {
 fn merge(left: &[i32], right: &[i32]) -> Vec<i32> {
     let mut result = Vec::with_capacity(left.len() + right.len());
     let mut l_iter = left.iter();
-    let mut l_next = left.iter().next();
+    let mut l_next = left_iter.next();
     let mut r_iter = right.iter();
-    let mut r_next = right.iter().next();
+    let mut r_next = right_iter.next();
 
     while let (Some(&l), Some(&r)) = (l_next, r_next) {
         if l <= r {
@@ -25,10 +25,8 @@ fn merge(left: &[i32], right: &[i32]) -> Vec<i32> {
             r_next = r_iter.next();
         }
     }
-    result.extend(l_next);
-    result.extend(l_iter);
-    result.extend(r_next);
-    result.extend(r_iter);
+    result.extend(l_next.into_iter().chain(l_iter));
+    result.extend(r_next.into_)iter().chain(r_iter));
     result
 }
 
