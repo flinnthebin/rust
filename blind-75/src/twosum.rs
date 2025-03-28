@@ -23,6 +23,8 @@ Constraints:
     Only one valid answer exists.
 */
 
+// naive, On^2
+
 pub fn two_sum(arr: Vec<i32>, tar: i32) -> Vec<i32> {
     for i in 0..arr.len() {
         for j in (i + 1)..arr.len() {
@@ -30,6 +32,22 @@ pub fn two_sum(arr: Vec<i32>, tar: i32) -> Vec<i32> {
                 return vec![i as i32, j as i32];
             }
         }
+    }
+    vec![]
+}
+
+// hashmap
+
+use std::collections::HashMap;
+
+pub fn two_sum_hash(arr: Vec<i32>, tar: i32) -> Vec<i32> {
+    let mut seen = HashMap::new();
+    for (i, num) in arr.iter().enumerate() {
+        let complement = tar - num;
+        if let Some(&j) = seen.get(&complement) {
+            return vec![j as i32, i as i32];
+        }
+        seen.insert(num, i);
     }
     vec![]
 }
