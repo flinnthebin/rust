@@ -60,6 +60,53 @@ fn main() {
 }
 ```
 
+## ok, but what even is a future?
+
+Remember, async functions or indeed any async block is really just a chunked computation.
+
+```rust
+async fn foo() {
+    let mut x = [0; 1024]; // we like fixed-sized byte arrays
+    let n: usize = tokio::fs::read_into("file.dat", &mut [x..]).await;
+    println!("{:?}", x[..n]);
+}
+```
+
+The above example can also be represented in these chunks:
+
+```rust
+async fn foo() {
+    // chunk 1
+    {
+    let mut x = [0; 1024];
+    let z = vec![];
+    let fut = tokio::fs::read_into("file.dat", &mut [x..]);
+    }
+
+    fut.await; // this is really a yield, which is basically a return
+
+    // chunk 2
+    {
+    let n = fut.output();
+    println!("{:?}", x[..n]);
+    }
+}
+```
+
+But where is x? Intuitively, one would think x was a stack variable. But when we await the value, x is returned, so the
+stack frame should be collapsed. But our future holds a reference to x so that it can write into it. In practice, when
+we write async event or an async block the compiler generates a state machine that looks similar to the below:
+
+```rust
+enum StateMachine {
+    Chunk1 { x: [u8; 1024] },
+    Chunk2 {},
+}
+```
+
+As we are required to reference x later, it is stored in the state machine. z doesn't exist outside of chunk 1 and so is
+able to be dropped when the stack frame collapses.
+
 ## mental model
 
 Suppose we have a relatively large operation to be performed, like reading a file into a string buffer. the .await
@@ -399,3 +446,5 @@ async fn handle_connection(_: TcpStream) {
     assert_eq!(join_handle.await(), Err);
 }
 ```
+
+
