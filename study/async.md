@@ -1,5 +1,8 @@
 # async/await
 
+Async isn't magical. It just describes the mechanisms for changing or co-operatively scheduling a bunch of
+computation by describing under which circumstances code can make progress and under which circumstances code can yield.
+
 ## decorator
 
 The async decorator on functions is simply a transformation directive to the compiler.
@@ -140,6 +143,9 @@ loop {
 
 ## cancellation
 
+The way that cancellation is performed is that you describe the circumstances under which you should cancel the
+operation.
+
 ```rust
 fn foo2(cancel: tokio::sync::mpsc::Receiver<()>) -> impl Future<Output = usize> {
     async {
@@ -164,3 +170,50 @@ fn foo2(cancel: tokio::sync::mpsc::Receiver<()>) -> impl Future<Output = usize> 
     }
 }
 ```
+
+## executor
+
+The basic premise of an executor is that you're only allowed to await in async functions and async blocks.
+
+```rust
+async fn main() {} // top level future
+```
+
+Here, the compiler complains. This code describes a future that holds the entire control flow of the program,
+with nothing to run is asynchronously and determine if we can make progress on the future, or yield. More
+problematically, main cannot yield without ending progrma execution.
+
+```rust
+[#tokio::main] // executor
+async fn main() {}
+```
+
+The executor crate provides low-level resources like network sockets and timers and the top-level executor loop
+that allows us to await on our main function. The executor functions similarly to an the epoll API in linux.
+It maintains an interest list of file descriptors on awaited futures, returning them when they change to the ready
+state.
+
+## executor macro
+
+The [#tokio::main] macro that allows us to write async fn main is really just a procedural macro
+
+```rust
+[#tokio::main]
+async fn main() {
+    // some code
+}
+```
+
+That rewires our main code to something like this, because the operating system expects all binaries to have a
+main. It doesn't understand async runtimes, which is why we need to create a runtime event loop to run our async code.
+
+```rust
+fn main() {
+    let runtime = tokio::runtime::Runtime::new();
+    runtime.block_on(async {
+        // some code
+    });
+}
+```
+
+
