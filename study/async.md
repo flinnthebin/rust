@@ -3,6 +3,9 @@
 Async isn't magical. It just describes the mechanisms for changing or co-operatively scheduling a bunch of
 computation by describing under which circumstances code can make progress and under which circumstances code can yield.
 
+Tokio is a crate that abstracts over mio which abstracts over epoll, kqueue. This allows us to create operating system
+event register that lets us say 'I want to go to sleep until any of these events occur'.
+
 ## decorator
 
 The async decorator on functions is simply a transformation directive to the compiler.
@@ -124,19 +127,19 @@ progress at all on either, we run foo2. Wen we run foo2, as soon as we hit the f
 we bubble back up the call stack to the original select statement and check if there is anything on the network/terminal to do.
 
 ```rust
-let network = read_from_network();
-let terminal = read_from_terminal();
+let mut network = read_from_network();
+let mut terminal = read_from_terminal();
 let mut foo = foo2();
 
 loop {
     select! {
-        stream <- network.await => {
+        stream <- (&mut network).await => { // must be a mutable reference or ownership transfers to await
             // do something on stream
         }
-        line <- terminal.await => {
+        line <- (&mut terminal).await => {
             // do something with line
         }
-        foo <- foo.await => {}
+        foo <- (&mut foo).await => {}
     };
 }
 ```
@@ -215,5 +218,82 @@ fn main() {
     });
 }
 ```
+
+## abandoned select arm side effects
+
+Select tries all branches until one succeeds. In this example, suppose it tries all arms and then begins copying. It
+copies part of the file over, but then the disk is saturated, so it yields and waits on the disk. Then, stream
+completes. As we are not looping, we exit the select. Some bytes are copied from foo to bar, but the future isn't
+complete. This issue only occurs with selects and can be solved by using non-selecting awaits.
+
+```rust
+fn main() {
+    let runtime = tokio::runtime::Runtime::new();
+    runtime.block_on(async {
+        let mut network = read_from_network();
+        let mut terminal = read_from_terminal();
+        let mut foo = foo2();
+        let mut f1 = tokio::fs::File::open("foo"); // async version of I/O operation for async runtime
+        let mut f2 = tokio::fs::File::create("bar");
+        let copy = tokio::io::copy(&mut f1, &mut f2); // async read from f1, async write to f2
+
+        select! {
+            stream <- (&mut network).await => { // must be a mutable reference or ownership transfers to await
+                // do something on stream
+            }
+            line <- (&mut terminal).await => {
+                // do something with line
+            }
+            foo <- (&mut foo).await => {}
+            _ <- copy.await => {}
+        };
+
+        (&mut foo).await // awaiting after loop exit on a mutable reference prevents dropping/move semantics
+    });
+}
+```
+
+## fuse
+
+Fuse is a way to describe that it is safe to pull a future, even if that future has been completed in the past. Suppose
+in the loop below, network and terminal are both complete. The select will pull the network future, then in the second
+iteration of the loop, network has been pulled but select does not remember this. The Fuse trait makes the network
+variable safe to pull again, even though it has already yielded its value.
+
+```rust
+loop {
+    select! {
+        stream <- (&mut network).await => { // must be a mutable reference or ownership transfers to await
+            // do something on stream
+        }
+        line <- (&mut terminal).await => {
+            // do something with line
+        }
+        foo <- (&mut foo).await => {}
+        _ <- copy.await => {}
+    };
+}
+```
+
+## join
+
+Below is an iterator of futurers that we want to wait for all of them to complete before continuing. In this case, there
+is the join operation.
+
+```rust
+let files: Vec<_> = (0..3)
+    .map(|i| tokio::fs::File::read_to_string(format!("file{}", i)))
+    .collect();
+let (file1, file2, file3) = join!(files[0], files[1], files[2]); // explicitly name when you want output to mirror input
+// or
+let file_bytes = try_join_all(files) // here, file_bytes[0] == file[0]
+```
+
+## parallelism
+
+
+
+
+
 
 
