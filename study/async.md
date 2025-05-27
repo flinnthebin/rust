@@ -99,15 +99,33 @@ we write async event or an async block the compiler generates a state machine th
 
 ```rust
 enum StateMachine {
-    Chunk1 { x: [u8; 1024] },
+    Chunk1 { x: [u8; 1024], fut: tokio::fs::ReadIntoFuture<'x> },
     Chunk2 {},
 }
 ```
 
 As we are required to reference x later, it is stored in the state machine. z doesn't exist outside of chunk 1 and so is
-able to be dropped when the stack frame collapses.
+able to be dropped when the stack frame collapses. Remember how async functions are really just functions that return an
+impl Future? The type is actually returns is this StateMachine type. Cool!
 
-## mental model
+```rust
+fn foo() -> impl Future<Output = ()> /* StateMachine */
+```
+
+This is not a perfect desugaring of what is happening, but essentially inside our async blocks, when we declare a value
+x it has a type of StateMachine. When we then call await, it is essentially calling the await method on that particular
+state machine. Again, not exactly what happens under the hood, but it is a good mental model. The state machine is
+holding all values that are kept across await points.
+
+```rust
+#[tokio::main]
+async fn main() {
+    let mut x: StateMachine = foo();
+    StateMachine::await(&mut x);
+}
+```
+
+## desugaring await
 
 Suppose we have a relatively large operation to be performed, like reading a file into a string buffer. the .await
 basically binds the output of the read_to_string function to a future, and while that future is not ready, the thread
@@ -390,12 +408,13 @@ async fn handle_connection(_: TcpStream) { todo!() }
 
 Spawn generally requires 'static lifetimes, as in the example below, the handle_connection future could complete before
 the spawned future within completed, meaning that that thread would still be trying to access x after it was dropped,
-whihc we solve with 'static.
+whihc we solve with 'static. If an operation is particularly greedy, we can use spawn_blocking to perform the
+computation in such a way that permits some asynchonicity where otherwise they would be none.
 
 ```rust
 async fn handle_connection(_: TcpStream {
     let x = vec![];
-    tokio::spawn(async {
+    tokio::spawn_blocking(async {
         &x;
     }
 }
@@ -447,4 +466,127 @@ async fn handle_connection(_: TcpStream) {
 }
 ```
 
+## future sizes
+
+Recall our earlier example. Here, when we call bar, we need to pass the entire state machine into the function. This
+requires a memcopy of the entire state machine. Because all futures hold all of their sub futures, as you go up the
+stack, it can get extremely expensive to pass these futures around.
+
+```rust
+#[tokio::main]
+async fn main() {
+    let mut x: StateMachine = foo();
+    StateMachine::await(&mut x);
+    bar(x);
+}
+
+fn bar(_: impl Future){}
+
+enum StateMachine {
+    Chunk1 { x: [u8; 1024], fut: tokio::fs::ReadIntoFuture<'x> },
+    Chunk2 {},
+}
+```
+
+This can be solved by boxing out futures, which creates a heap allocation that we can then simply pass to bar as a boxed
+value that it is allowed to treat as a future
+
+```rust
+#[tokio::main]
+async fn main() {
+    let mut x = Box::pin(foo());
+    bar(x);
+}
+```
+
+Spawn is another good way to reduce memory overhead. Spawn holds a pointer to the original future, so rather than
+growing the onion by consuming the future, it simply holds a reference.
+
+```rust
+#[tokio::main]
+async fn main() {
+    let mut x = [0; 1024]; // we like fixed-sized byte arrays
+    let n: usize = tokio::fs::read_into("file.dat", &mut [x..]).await;
+    println!("{:?}", x[..n]);
+    some_library::execute()).await // here, the caller needs to store the whole future
+    tokio::spawn(some_library::execute()).await // here, spawn stores a pointer to the value with no memcopy
+}
+```
+
+## mutex
+
+Below we have two asynchronous threads, both of which are accessing the same Arc using the std library Mutex.
+In a runtime with only 1 thread, say our first loop runs first, x locks. Then we await on the file read. The await
+yields when it can no longer read and we move to the second loop, but the lock is still held by x in the first loop.
+Becuase we are using the standard library mutex, it blocks the thread. It doesn't know anything about asynchrony. So the
+single thread of the runtime is blocked. This means the first future never drops its lock guard, so the lock is never
+released and program execution is deadlocked.
+
+```rust
+async fn main() {
+    let x = Arc::new(Mutex::new(0));
+    let x1 = Arc::clone(&x);
+    tokio::spawn(async move {
+        loop {
+            let x = x1.lock();
+            tokio::fs::read_to_string("file").await;
+            *x += 1;
+        }
+    });
+    let x2 = Arc::clone(&x);
+    tokio::spawn(async move {
+        loop {
+            *x2.lock() -= 1;
+        }
+    });
+}
+```
+
+This is still strange, even if we use the tokio mutex. When we move to the second future, it still can't complete until
+the lock guard is dropped and the lock is released. So the second future will just repeatedly yield until the first
+future released the lock. Async mutexes are also much slower then std library mutexes, which is a consideration. In
+general, we want to use standard library mutexes unless there is a likelihood that yielding will create a deadlock. If
+we are awaiting any value, we should use an asynchronous mutex.
+
+```rust
+async fn main() {
+    let x = Arc::new(tokio::sync::Mutex::new(0));
+    let x1 = Arc::clone(&x);
+    tokio::spawn(async move {
+        loop {
+            let x = x1.lock();
+            tokio::fs::read_to_string("file").await;
+            *x += 1;
+        }
+    });
+    let x2 = Arc::clone(&x);
+    tokio::spawn(async move {
+        loop {
+            *x2.lock() -= 1;
+        }
+    });
+}
+```
+
+In the below example, we can use a standard library mutex as there is no await that may cause a deadlock, so the
+standard library mutex will run faster and better serve our purposes.
+
+```rust
+async fn main() {
+    let x = Arc::new(Mutex::new(0));
+    let x1 = Arc::clone(&x);
+    tokio::spawn(async move {
+        loop {
+            let x = x1.lock();
+            *x += 1;
+        }
+    });
+    let x2 = Arc::clone(&x);
+    tokio::spawn(async move {
+        loop {
+            *x2.lock() -= 1;
+        }
+    });
+}
+```
 
