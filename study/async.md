@@ -278,7 +278,8 @@ loop {
 ## join
 
 Below is an iterator of futurers that we want to wait for all of them to complete before continuing. In this case, there
-is the join operation.
+is the join operation. Join and join_all use FuturesOrdered under the hood, FuturesUnordered can be faster if the use
+case is permissive.
 
 ```rust
 let files: Vec<_> = (0..3)
@@ -286,14 +287,115 @@ let files: Vec<_> = (0..3)
     .collect();
 let (file1, file2, file3) = join!(files[0], files[1], files[2]); // explicitly name when you want output to mirror input
 // or
-let file_bytes = try_join_all(files) // here, file_bytes[0] == file[0]
+let file_bytes = join_all(files) // here, file_bytes[0] == file[0]
 ```
 
 ## parallelism
 
+Join and Select are tools that allow for concurrency, not parallelism. The issue here is that the top-level async block
+is effectively one top-level future, which can only run on one thread.
 
+```rust
+fn main {
+    let runtime = tokio::runtime::Runtime::new();
+    runtime.block_on(async {
+        println!("Hello World!");
 
+        let accept = tokio::net::TcpListener::bind("0.0.0.0:8080");
+        let mut connections = futures::future::FuturesUnordered::new();
+        loop {
+            select! {
+                stream <- (&mut accept).await => {
+                    connections.push(handle_connection(stream));
+                }
+                _ <- (&mut connections).await => {} // this needs to be here, awaiting all the futures.
+                // if nothing awaits the FuturesUnordered, nothing awaits the futures inside there, nothing
+                // is awaiting the client connections, so no client connections are served.
+            }
+        }
+    }
+}
 
+async fn handle_connection(_: TcpStream) { todo!() }
+```
 
+There is a function provided by every executor, spawn. Spawn is a hook into the executor (tokio here) which you pass a
+future and spawn moves it into the executor. Now it is as if you have given the future directly to the runtime, meaning
+the runtime has both the top-level async block future and the future passed to it by spawn. It is important to note that
+spawn is not a thread spawn, there are a fixed number of threads in the runtime thread pool.
+Here we are simply passing futures to this thread pool.
 
+```rust
+fn main {
+    let runtime = tokio::runtime::Runtime::new();
+    runtime.block_on(async {
+        println!("Hello World!");
 
+        let accept = tokio::net::TcpListener::bind("0.0.0.0:8080");
+        while let Ok(stream) = accept.wait {
+            tokio::spawn(handle_connection(stream));
+        }
+    }
+}
+
+async fn handle_connection(_: TcpStream) { todo!() }
+```
+
+Spawn generally requires 'static lifetimes, as in the example below, the handle_connection future could complete before
+the spawned future within completed, meaning that that thread would still be trying to access x after it was dropped,
+whihc we solve with 'static.
+
+```rust
+async fn handle_connection(_: TcpStream {
+    let x = vec![];
+    tokio::spawn(async {
+        &x;
+    }
+}
+```
+
+When spawning two things and having them access the same data structure, we need to use this type of pattern so that
+x1 and x2 each have their own atomic reference count, a mutex that guards the underlying value & thread locking. Similar
+style to C++ multi-threaded programming.
+
+```rust
+async fn handle_connection(_: TcpStream) {
+    let x = Arc::new(Mutex::new(vec![]));
+    let x1 = Arc::clone(&x);
+    tokio::spawn(async move {
+        x1.lock()
+    });
+    let x2 = Arc::clone(&x);
+    tokio::spawn(async move {
+        x2.lock()
+    });
+}
+```
+
+In order to communicate the value of a spawned operation back to the caller, we need to await the value of the spawned
+operation. If we do not await the join_handle, the value is dropped.
+
+```rust
+async fn handle_connection(_: TcpStream) {
+    let x = Arc::new(Mutex::new(vec![]));
+    let x1 = Arc::clone(&x);
+    let join_handle = tokio::spawn(async move {
+        x1.lock();
+        0
+    });
+    assert_eq!(join_handle.await(), 0);
+}
+```
+
+Errors in async can be tricky, because there is no guarantee that the caller is awaiting the value of the operation.
+Even though we return the error to handle_connection, there is no guarantee it bubbles up to main.
+
+```rust
+async fn handle_connection(_: TcpStream) {
+    let x = Arc::new(Mutex::new(vec![]));
+    let join_handle = tokio::spawn(async move {
+        let y: Result<_, _> = definitely_errors();
+    });
+    assert_eq!(join_handle.await(), Err);
+}
+```
