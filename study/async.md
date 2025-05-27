@@ -117,17 +117,50 @@ fn foo2() -> impl Future<Output = usize> {
 Suppose we have some application that reads user input from the terminal, and reads traffic over the network. Both of
 these futures can reolve at any time in any order and we don't care about the order. We can handle this as per the
 example below. If we can progress on the network, we will, else we attempt progress on the terminal, if we cannot
-progress at all on either, we yield.
+progress at all on either, we run foo2. Wen we run foo2, as soon as we hit the first yield in foo2 reading from disk, 
+we bubble back up the call stack to the original select statement and check if there is anything on the network/terminal to do.
 
 ```rust
 let network = read_from_network();
 let terminal = read_from_terminal();
+let mut foo = foo2();
 
-select! {
-    stream <- network.await => {
-        // do something on stream
+loop {
+    select! {
+        stream <- network.await => {
+            // do something on stream
+        }
+        line <- terminal.await => {
+            // do something with line
+        }
+        foo <- foo.await => {}
+    };
+}
+```
+
+## cancellation
+
+```rust
+fn foo2(cancel: tokio::sync::mpsc::Receiver<()>) -> impl Future<Output = usize> {
+    async {
+        println!("foo1");
+        read_to_string("file1").await;
+        println!("foo1");
+        select! {
+            done <- read_to_string("file2").await => {
+                continue; // fall-through to println below
+            }
+            cancel <- cancel.await => {
+                return 0; // break
+            }
+        }
+        println!("foo1");
+        some_function(x);
+        other_function(x);
+        read_to_string("file3").await;
+        println!("foo1");
+        read_to_string("file4").await;
+        0
     }
-    line <- terminal.await => {
-        // do something with line
-    }
-};
+}
+```
