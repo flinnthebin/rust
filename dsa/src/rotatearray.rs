@@ -1,4 +1,5 @@
-fn rotate(nums: &mut Vec<i32>, k: i32) {
+#[allow(dead_code)]
+fn rotate(nums: &mut [i32], k: i32) {
     let len = nums.len();
     if len == 0 {
         return;
