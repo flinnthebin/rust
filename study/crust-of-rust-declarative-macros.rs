@@ -370,3 +370,26 @@ macro_roles! count {
     };
 }
 
+/// Comparing to the std library implementation
+/// The representation of a vector is (on the stack) the length, the capacity and
+/// a pointer to the data (which is on the heap). A box is just a pointer to something on the heap.
+/// This macro creates an array of all the elements, the box keyword enforces that this operation
+/// is done on the heap. This returns a boxed array on the heap. <[_]> tells the compiler to treat
+/// this as a boxed slice (instead of a boxed array) and then call into_vec. So with the pointer to
+/// the heap provided by the box, a vector can be trivially constructed by constructing something
+/// with that length, that capacity using that pointer.
+macro_rules! vec {
+    () => (
+        $crate::vec::Vec::new()
+    );
+    ($elem:expr; $n:expr) => (
+        $crate::vec::from_elem($elem, $n)
+    );
+    ($($x:expr),+ $(,)?) => (
+        <[_]>::into_vec(
+            // Using the intrinsic produces a dramatic improvement in stack usage for
+            // unoptimized programs using this code path to construct large Vecs.
+            $crate::boxed::box_new([$($x),+])
+        )
+    );
+}
