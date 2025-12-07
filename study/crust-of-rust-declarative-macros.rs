@@ -7,18 +7,13 @@
 /// analysis of concepts, etc. This simply exists to refresh my mind.
 /// In the spirit of sharing and collaboration, I welcome you to read my notes.
 
-/// 
-/// expr: an expression is (almost) anything that can be terminated with a semicolon
-/// ty: a type is a type
-///
-
 /// typical macro definition
 macro_rules! f{
     () => {}
 }
 
 /// these are all valid macro invocations
-/// there is no ability for the author to impose a syntactic requirement
+/// there is no ability for the author to impose a requirements
 /// on the calling sytax
 f!()
 f![]
