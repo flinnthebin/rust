@@ -124,6 +124,10 @@ on a drive, including itself, essentially defining what constitutes a file and i
 |                        |      When it grows too large, becomes 'non-resident' and is moved to disk.
 |------------------------|
 
+# File Carving
+
+File carving scans all clusters that are unallocated for traces of files that once existed in that space.
+
 # Deleted Files - NTFS
 
 When a file is deleted:
@@ -132,3 +136,65 @@ When a file is deleted:
 
 Nothing is wiped. Until the FILE entry is overwritten, the the data is still stored in the same location
 pointed at by $DATA
+
+# Fle Slack
+
+File Slack Occurs because data can only be allocated to files at the Cluster level. If a file does not fill the entire
+cluster, the remaining “slack” may contain residual or hidden data. This is also known as Drive Slack.
+
+# Registry Hives
+
+• SAM – Security Accounts Manager, contains user and group membership info.
+• SYSTEM – contains information about the Windows system setup, the list of currently
+mounted devices containing a filesystem, configurations for system hardware drivers and
+services running on the local system.
+• SOFTWARE - contains software and Windows settings. It is mostly modified by application
+and system installers
+• SECURITY - The kernel will access it to read and enforce the security policy applicable to the
+current user and all applications or operations executed by this user.
+The is also a per user hive
+• NTUSER.dat
+
+# USB Drives
+
+Under the SYSTEM hive, the USBSTOR key contains a subkey for each USB device plugged into the system
+    - USB ClassGUID
+    - Manufacturer Name, Friendly Device Name
+    - Serial Number
+
+Plug and Play Log - C:\Windows\setupapi.log
+
+# Linkfiles
+
+Linkfiles are small “shortcut” files used by windows for features such as “Recents”. They frequently get created
+when a file is opened from Windows Explorer.
+They typically have an “lnk” file extention, can can contain information such as:
+- The orginal path and filename of file, including the drive letter, or network path.
+- The timestamps of the target file (in addition to its own timestamps)
+- For external drives, the volume serial number of the drive.
+
+# Prefetch
+
+The Prefetch folder was introduced in Windows XP, and was designed to speed up the application
+startup process.
+The Prefetch folder is located at C:\Windows\Prefetch
+Each prefetch file contains:
+- The name of the executable
+- Unicode list of DLLs used by that executable
+- A count of how many times the executable has
+been run
+- A timestamp indicating the last time the program
+was run.
+
+# Memory Analytics
+
+(1) Investigate running processes
+(2) Identify suspicious file handles, DLLs
+(3) Observe network traffic/ports
+(4) Identify code injection
+(5) Investigate possible root kits
+(6) Export for further analysis
+
+vol -f <file> windows.pslist or windows.pstree
+
+# 
